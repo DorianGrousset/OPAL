@@ -90,6 +90,7 @@ documentation OpenAPI sur <http://localhost:8000/docs>.
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # pytest & co, requis pour lancer les tests
 uvicorn main:app --reload --port 8000
 ```
 

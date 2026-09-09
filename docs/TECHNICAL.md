@@ -132,7 +132,7 @@ backend/
 ├── i18n/
 │   ├── en.json                # Traductions EN (cache au demarrage)
 │   └── fr.json                # Traductions FR (cache au demarrage)
-└── tests/                     # 59 fichiers de tests (560+ cas)
+└── tests/                     # 59 fichiers de tests (727 cas collectes)
 ```
 
 ### Configuration (`config.py`)
@@ -238,7 +238,7 @@ Module utilitaire qui evite de dupliquer la logique connexion CDM dans 5+ router
 | React Router 6 | Routing SPA |
 | i18next | Internationalisation (FR/EN) |
 | keycloak-js | Client OIDC |
-| Vitest + Testing Library | Tests unitaires et composants (17 fichiers, 130 cas) |
+| Vitest + Testing Library | Tests unitaires et composants (17 fichiers, 129 cas) |
 
 ### Architecture
 
@@ -1624,9 +1624,27 @@ il ne redefinit que 3 services et se superpose au compose de base
 Il ajoute les durcissements suivants :
 - Keycloak en mode production (`start` au lieu de `start-dev`)
 - PostgreSQL pour persistence Keycloak (remplace H2 en memoire)
-- Ports bindes sur localhost uniquement
+- Ports bindes sur localhost uniquement — **⚠️ actuellement inoperant, voir ci-dessous**
 - Variables d'environnement requises (`:?`)
 - Limites de ressources (CPU/RAM)
+
+> ⚠️ **Defaut connu — publication du port Keycloak.** Compose **fusionne** les
+> listes `ports:` au lieu de les remplacer. Keycloak se retrouve donc avec **deux**
+> publications : `8080:8080` (fichier de base, toutes interfaces) **et**
+> `127.0.0.1:${KEYCLOAK_PORT:-8080}:8080` (overlay). Deux consequences :
+>
+> 1. Avec la valeur par defaut, les deux visent le port hote 8080 et le
+>    demarrage **echoue** : `failed to bind host port 127.0.0.1:8080/tcp:
+>    address already in use`. Contournement immediat : definir `KEYCLOAK_PORT`
+>    sur un port libre (ex. `8081`).
+> 2. Meme avec un port different, la publication `0.0.0.0:8080` du fichier de
+>    base subsiste : **Keycloak reste joignable sur toutes les interfaces**, donc
+>    le durcissement annonce n'est pas obtenu.
+>
+> Correctif cote code (non applique) : retirer la publication du port dans
+> `docker-compose.yml` et ne la declarer que dans l'overlay, ou utiliser
+> `!override` sur `ports:` dans `docker-compose.prod.yml`. En attendant, filtrer
+> le port 8080 au pare-feu de l'hote.
 
 > Note : le socket Docker n'est plus monte (ni en dev ni en prod) — l'orchestration
 > OHDSI passe par le runner dedie. Pour activer OHDSI en prod : `OHDSI_MODE=on` +
@@ -1658,7 +1676,7 @@ app.dependency_overrides[get_db] = override_get_db
 - **`omop_mock.py`** : Mock reutilisable de connexion psycopg2 avec sequences de reponses pre-configurees (dict→fetchone, list→fetchall, Exception→erreur)
 - **`README.md`** : Documentation complete de l'architecture de test
 
-### Couverture de tests (59 fichiers / 560+ cas backend, 17 fichiers / 130 cas frontend)
+### Couverture de tests (59 fichiers / 727 cas backend, 17 fichiers / 129 cas frontend)
 
 #### Tests existants (v1.0)
 
@@ -1721,7 +1739,7 @@ app.dependency_overrides[get_db] = override_get_db
 | `test_rate_limit.py` | Rate limiting par endpoint |
 | `test_sql_safety.py` | Validation safe_identifier, longueur max |
 
-#### Tests frontend (17 fichiers, 130 cas)
+#### Tests frontend (17 fichiers, 129 cas)
 
 | Fichier | Couverture |
 |---------|-----------|

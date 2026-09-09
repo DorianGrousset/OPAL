@@ -80,7 +80,20 @@ Les 4 services communiquent via le reseau Docker interne `opal-network`. Ports e
   psql -U postgres -d <nom_cdm> -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
   ```
 
-  L'app DB (`opal`) installe automatiquement l'extension via la migration Alembic `e5f6a7b8c9d0`. Pour les CDMs externes, OPAL se connecte en lecture seule et ne peut pas l'installer lui-meme.
+  Pour les CDMs externes, OPAL se connecte en lecture seule et ne peut pas l'installer lui-meme.
+
+  > ⚠️ **A faire aussi sur la base applicative `opal`.** Une migration Alembic
+  > (`e5f6a7b8c9d0`) prevoit cette installation, mais **le conteneur backend ne
+  > lance pas Alembic au demarrage** : il cree le schema via
+  > `Base.metadata.create_all()`. Sur une installation neuve il n'y a donc ni
+  > table `alembic_version` ni extension `unaccent`, et les recherches sur le
+  > Source Value Cache (explorateur de concepts en mode valeur source,
+  > autocompletion du constructeur de cohortes, recherche globale) echouent avec
+  > `function unaccent(unknown) does not exist` des que le cache est peuple.
+  >
+  > ```bash
+  > docker compose exec opal-db psql -U opal -d opal -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
+  > ```
 
 ### Lancement
 
@@ -863,7 +876,7 @@ opal/
 │   ├── i18n/
 │   │   ├── en.json           # Traductions anglais
 │   │   └── fr.json           # Traductions francais
-│   └── tests/                # 59 fichiers de tests (560+ cas)
+│   └── tests/                # 59 fichiers de tests (727 cas collectes)
 │       ├── conftest.py       # Fixtures SQLite in-memory
 │       ├── omop_mock.py      # Mock reutilisable psycopg2
 │       ├── README.md         # Documentation architecture de test
