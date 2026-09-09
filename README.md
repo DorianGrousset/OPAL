@@ -753,7 +753,7 @@ Le controle s'applique a deux niveaux :
 | Authentification | Activer Keycloak (`AUTH_ENABLED=true`) |
 | Reseau | Ne pas exposer les ports 8000 et 5432 en production |
 | Keycloak | Changer le mot de passe admin par defaut |
-| Docker | Utiliser `docker-compose.prod.yml` pour le deploiement production |
+| Docker | Superposer l'overlay production : `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` (les deux `-f` sont requis) |
 
 Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique detaille des fonctionnalites par version.
 

@@ -1617,7 +1617,11 @@ pas d'acces a `opal-db` ni Keycloak) ; le backend est attache aux deux.
 
 ### docker-compose.prod.yml (production)
 
-Le fichier `docker-compose.prod.yml` ajoute les durcissements suivants :
+Le fichier `docker-compose.prod.yml` est un **overlay**, pas un fichier autonome :
+il ne redefinit que 3 services et se superpose au compose de base
+(`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`).
+
+Il ajoute les durcissements suivants :
 - Keycloak en mode production (`start` au lieu de `start-dev`)
 - PostgreSQL pour persistence Keycloak (remplace H2 en memoire)
 - Ports bindes sur localhost uniquement
@@ -1772,7 +1776,15 @@ KEYCLOAK_ISSUER_URL=http://monserveur:8080   # URL publique de Keycloak (vue par
 
 # OBLIGATOIRE — reseau
 CORS_ORIGINS=http://monserveur:3000    # URL(s) d'acces a OPAL, separees par des virgules
+
+# OBLIGATOIRE — specifique a l'overlay de production
+KC_DB_PASSWORD=$(openssl rand -hex 32) # base PostgreSQL dediee a Keycloak
+EXTERNAL_HOSTNAME=monserveur.chu.fr    # hostname public de Keycloak (KC_HOSTNAME)
 ```
+
+> Les deux dernieres ne sont lues que par `docker-compose.prod.yml`. Elles sont
+> declarees en `:?` : le demarrage **echoue immediatement** avec un message
+> explicite si elles sont absentes ou vides.
 
 > **ENVIRONMENT=production** active les controles de securite au demarrage :
 > - `AUTH_ENABLED` doit etre `true` (sinon le backend refuse de demarrer)
@@ -1784,8 +1796,23 @@ CORS_ORIGINS=http://monserveur:3000    # URL(s) d'acces a OPAL, separees par des
 
 #### 2. Lancer les services
 
+La production s'obtient en **superposant** l'overlay `docker-compose.prod.yml`
+au fichier de base. Les deux `-f` sont obligatoires :
+
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+> ⚠️ **Ne pas lancer `docker compose up -d` seul en production.** Sans l'overlay,
+> Keycloak demarre en `start-dev` avec une base **H2 en memoire** — les
+> utilisateurs et les sessions sont perdus a chaque redemarrage — et son port est
+> expose sur toutes les interfaces au lieu de `127.0.0.1`.
+
+Avec un module optionnel, ajouter son profil :
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile ohdsi up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile sapbert up -d
 ```
 
 Au premier demarrage :
