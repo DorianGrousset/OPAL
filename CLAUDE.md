@@ -35,13 +35,13 @@ npm run build     # Production build via Vite
 
 ### Testing
 ```bash
-# Backend (53 test files)
+# Backend (59 test files)
 cd backend
 pytest tests/ -v              # Run all backend tests
 pytest tests/test_api.py -v   # Run a single test file
 pytest tests/test_api.py::test_function_name -v  # Run a single test
 
-# Frontend (84 tests)
+# Frontend (17 test files)
 cd frontend
 npx vitest run
 ```
@@ -71,7 +71,7 @@ Docker Compose runs four services: `opal-frontend`, `opal-backend`, `opal-db`, `
 - `models.py` — 26 models with composite indexes on frequently-filtered columns: `AnalysisSnapshot(cdm_name, domain, version)`, `CohortVersion(cohort_id, version)`, `MappingDecision(cdm_name, domain, source_value)`, `Notification(username, read)`, `NotificationPreference(username, type)`
 - `omop_connector.py` — Per-CDM `ThreadedConnectionPool` for external OMOP CDM connections. `PooledConnection` wrapper makes `close()` return to pool transparently. Pools auto-evicted after 30min idle, invalidated on CDM update/delete.
 
-**Modules** (`modules/`) — 21 routers:
+**Modules** (`modules/`) — 23 routers:
 - `admin_router.py` — User management, access requests (`/api/admin/`)
 - `cdm_router.py` — CDM registration CRUD, connection testing, settings management (`/api/cdm/`)
 - `quality/router.py` + `quality/engine.py` — Quality analysis with Achilles-like metrics, snapshot versioning, comparison, CSV export (`/api/quality/`)
@@ -93,6 +93,8 @@ Docker Compose runs four services: `opal-frontend`, `opal-backend`, `opal-db`, `
 - `groups_router.py` — User groups management (`/api/groups/`)
 - `lineage/router.py` + `lineage/parser.py` — ETL lineage documentation upload, parsing and visualization (`/api/lineage/`)
 - `recent_router.py` — Recent user activity feed (`/api/recent/`)
+- `cohort_llm_router.py` — AI cohort assistant relay to the `opal-llm` service: natural-language draft, on-premise LLM settings (admin, Fernet-encrypted key), RAG index rebuild (`/api/cohort-llm/`). Opt-in via `COHORT_LLM_MODE`. See `docs/COHORT_LLM.md`.
+- `sapbert_router.py` — SapBERT module control: per-CDM/domain build state, enable/disable toggle, buildable domains, build + cancel (`/api/sapbert/`). Backed by `sapbert_client.py` (HTTP client of `opal-sapbert`) and `mapping/sapbert_build.py`.
 
 **Security**:
 - `utils/crypto.py` — Fernet encryption for stored CDM passwords using `SECRET_KEY`

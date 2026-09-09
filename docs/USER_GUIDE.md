@@ -7,16 +7,19 @@ Bienvenue dans OPAL (OMOP Platform for Analytics & Lineage). Ce guide vous accom
 ## Table des matieres
 
 1. [Premiers pas](#1-premiers-pas)
-2. [Navigation et interface](#2-navigation-et-interface)
-3. [Gestion des CDM](#3-gestion-des-cdm)
-4. [Analyse Qualite](#4-analyse-qualite)
-5. [Constructeur de Cohortes](#5-constructeur-de-cohortes)
-6. [Workflow de Mapping](#6-workflow-de-mapping)
-7. [Explorateur de Concepts](#7-explorateur-de-concepts)
-8. [Outils OHDSI](#8-outils-ohdsi)
-9. [Parametres](#9-parametres)
-10. [Audit et Administration](#10-audit-et-administration)
-11. [FAQ et Depannage](#11-faq-et-depannage)
+2. [Navigation et interface](#2-navigation-et-interface) — notifications, recherche globale, favoris, requetes sauvegardees, modeles
+3. [Gestion des CDM](#3-gestion-des-cdm) — enregistrement, schemas par categorie
+4. [Analyse Qualite](#4-analyse-qualite) — analyse par domaine, conformite, comparaison, rapports
+5. [Constructeur de Cohortes](#5-constructeur-de-cohortes) — Query Builder, **Assistant IA**, concept sets, Table 1, parcours patient, pathways, incidence, estimation
+6. [Workflow de Mapping](#6-workflow-de-mapping) — 6 onglets, consensus, application, rollback
+7. [Charger un referentiel (CCAM, CIM-10...)](#7-charger-un-referentiel-ccam-cim-10)
+8. [Data Management — extraire un jeu de donnees](#8-data-management--extraire-un-jeu-de-donnees)
+9. [Lineage — lignage ETL](#9-lineage--lignage-etl)
+10. [Explorateur de Concepts](#10-explorateur-de-concepts)
+11. [Outils OHDSI](#11-outils-ohdsi)
+12. [Parametres](#12-parametres) — Source Value Cache, SapBERT, LLM on-premise
+13. [Audit et Administration](#13-audit-et-administration) — utilisateurs, groupes, acces CDM, partage
+14. [FAQ et Depannage](#14-faq-et-depannage)
 
 ---
 
@@ -114,6 +117,44 @@ L'icone cloche dans la TopNav affiche le nombre de notifications non lues :
 - Actions disponibles : **marquer comme lu**, **supprimer** une notification
 - Les notifications arrivent en **temps reel via WebSocket** (pas besoin de rafraichir la page)
 
+### Preferences de notification
+
+Chaque utilisateur choisit les **types** de notification qu'il souhaite recevoir.
+Depuis le tiroir de notifications, ouvrir les preferences et activer/desactiver
+chaque type independamment. Un type desactive n'est plus notifie ; les
+notifications deja recues restent consultables.
+
+### Recherche globale
+
+La barre de recherche de la TopNav interroge **toutes les entites a la fois** :
+cohortes, concept sets, requetes sauvegardees, concepts OMOP du CDM courant.
+
+- Les resultats sont groupes par type
+- Cliquer sur un resultat ouvre directement l'element
+- La recherche peut etre restreinte au CDM selectionne
+
+### Favoris
+
+N'importe quelle cohorte, requete, concept ou CDM peut etre mis en **favori**
+(icone etoile). Les favoris sont **personnels** et se retrouvent depuis la page
+d'accueil, pour revenir en un clic aux elements utilises souvent.
+
+### Requetes SQL sauvegardees
+
+Dans l'editeur SQL du constructeur de cohortes, une requete peut etre
+**sauvegardee** avec un nom et une description, puis rechargee, modifiee ou
+supprimee. Les requetes sont **personnelles** et rattachees a un CDM.
+
+### Modeles de cohortes
+
+Les **modeles** (templates) sont des definitions de criteres reutilisables,
+classees par categorie. OPAL en fournit un jeu integre ; les administrateurs et
+OMOP DIM peuvent en creer d'autres.
+
+1. Depuis le constructeur, choisir un modele comme point de depart
+2. Les criteres du modele sont charges dans le Query Builder
+3. Les adapter, puis enregistrer comme une cohorte normale
+
 ### Conventions d'interface
 
 - Les **boutons bleus** declenchent des actions principales
@@ -151,6 +192,34 @@ La liste des CDM enregistres affiche :
 - Bouton **Supprimer** : retirer le CDM (avec confirmation)
 
 > **Important** : Le mot de passe n'est jamais affiche. Il est chiffre avec Fernet (AES-128) dans la base.
+
+---
+
+### Schemas par categorie (avance)
+
+Par defaut, toutes les tables OMOP sont lues dans le **schema OMOP** unique
+renseigne a l'enregistrement du CDM. Certaines installations rangent les tables
+dans **plusieurs schemas** — typiquement un **vocabulaire partage** entre
+plusieurs CDM.
+
+La section repliable **Per-category schemas (advanced)** permet de surcharger le
+schema **par categorie de tables** de la norme OMOP CDM v5.4 :
+
+| Categorie | Exemples de tables |
+|---|---|
+| `clinical` | `person`, `condition_occurrence`, `drug_exposure` |
+| `health_system` | `care_site`, `provider`, `location` |
+| `health_economics` | `cost`, `payer_plan_period` |
+| `derived` | `condition_era`, `drug_era` |
+| `metadata` | `cdm_source`, `metadata` |
+| `vocabulary` | `concept`, `concept_relationship`, `concept_ancestor` |
+
+- Laisser un champ **vide** = la categorie utilise le schema par defaut
+- Le nombre de tables concernees est indique en face de chaque categorie
+- Les reglages du CDM priment sur ceux de la configuration initiale
+
+> Utile par exemple pour pointer `vocabulary` vers un schema `omop_vocab`
+> commun, tout en gardant les donnees cliniques dans le schema de l'etablissement.
 
 ---
 
@@ -212,6 +281,30 @@ L'analyse qualite evalue vos donnees OMOP a travers 14 domaines (3 speciaux + 11
   - Taux de mapping au niveau terme (combien de codes source distincts sont mappes)
   - Taux de mapping au niveau ligne (combien de lignes sont mappees)
   - Top termes non mappes avec leur frequence
+
+### Conformite du CDM
+
+En complement de l'analyse par domaine, l'onglet **Conformite** lance une
+**validation structurelle** du CDM : les tables et colonnes attendues sont-elles
+presentes, les valeurs sont-elles coherentes ?
+
+Les controles sont regroupes en quatre categories :
+
+| Categorie | Ce qui est verifie |
+|---|---|
+| **Structure** | Presence des tables et colonnes attendues de la norme OMOP |
+| **Conformance** | Respect des conventions OMOP (types, references de concepts) |
+| **Completeness** | Champs obligatoires renseignes, taux de valeurs manquantes |
+| **Plausibility** | Valeurs vraisemblables (dates coherentes, ages, intervalles) |
+
+1. Lancer la validation (elle tourne en tache de fond et peut etre **annulee**)
+2. Chaque controle ressort avec un **statut** (succes / avertissement / echec)
+   et son detail
+3. Un **score global** resume la conformite
+4. Le dernier resultat est conserve : il est recharge automatiquement a la
+   reouverture de la page, sans relancer le calcul
+
+> La validation est limitee a 3 lancements par minute.
 
 ### Exporter les resultats
 
@@ -334,6 +427,85 @@ L'onglet **Table 1** genere une caracterisation complete de la cohorte :
    - **Types de visite** : repartition des types de visite (ambulatoire, hospitalisation, urgences...)
    - **Periodes d'observation** : statistiques de duree de suivi
 
+### Organisation des onglets
+
+La page Cohortes est organisee en **deux groupes d'onglets** :
+
+| Groupe | Onglets |
+|---|---|
+| **Cohort Builder** | Assistant IA*, Query Builder, Table 1, SQL, Concept Sets |
+| **Analyse** | Compare, Pathways, Incidence, Estimation |
+
+\* L'onglet **Assistant IA** n'apparait que si la fonctionnalite est activee
+cote serveur (`COHORT_LLM_MODE`).
+
+### Assistant IA — construire une cohorte en langage naturel
+
+**Acces** : onglet *Cohort Builder → Assistant IA* (visible seulement si active)
+
+Decrivez la cohorte en francais ; l'assistant produit un **brouillon** dont
+chaque terme est resolu en **codes reels de votre CDM**.
+
+1. Saisir la description, par exemple :
+   > « Femmes de 50 à 70 ans diabétiques de type 2 sous metformine, hospitalisées depuis 2022 »
+2. Cliquer sur **Generer**
+3. Le brouillon s'affiche : **demographie** (age, sexe, periode) + **criteres**,
+   chaque critere accompagne des **concept-sets** proposes (codes du CDM)
+4. **Revoir chaque critere** : cocher les codes pertinents, decocher le reste,
+   supprimer un critere entier si besoin
+5. Cliquer sur **Appliquer** : les criteres sont injectes dans le **Query
+   Builder**, ou vous les affinez comme des criteres saisis a la main
+
+> ⚠️ **Le brouillon est une proposition, pas une definition validee.** Un LLM
+> peut omettre un critere ou proposer des codes trop larges. La revue de
+> l'etape 4 fait partie du processus — c'est vous qui validez la cohorte.
+
+**Pre-requis** (sinon les criteres sortent sans codes) :
+
+| Pre-requis | Pourquoi |
+|---|---|
+| **Source Value Cache peuple** pour le CDM | C'est la source de l'index semantique qui resout les termes en codes |
+| **Module SapBERT actif** | Il produit les embeddings de la recherche semantique ; s'il est off, les criteres sont extraits mais les concept-sets **ne sont pas pre-remplis** |
+
+**Ou vont mes donnees ?** Le navigateur ne joint jamais le service LLM
+directement : tout passe par le backend OPAL, authentifie. En mode `embedded`,
+le modele tourne dans un conteneur local et rien ne sort de l'installation. En
+mode `on-premise`, le texte du prompt et les libelles partent vers **l'endpoint
+LLM de votre etablissement** — celui configure dans Reglages.
+
+> Details des modes, installation et configuration : [COHORT_LLM.md](COHORT_LLM.md).
+> Cas particulier de la resolution des **medicaments** (terme ou classe →
+> molecules → famille ATC) : [COHORT_LLM_MEDICAMENTS.md](COHORT_LLM_MEDICAMENTS.md).
+
+### Concept Sets
+
+**Acces** : onglet *Cohort Builder → Concept Sets*
+
+Un concept set est un **ensemble de codes reutilisable** dans plusieurs cohortes.
+OPAL en gere deux natures, dans un meme objet :
+
+| Nature | Contenu | Utilisation en cohorte |
+|---|---|---|
+| **Concepts OMOP** | `concept_id` standard | Critere qui matche sur `concept_id` |
+| **Codes source** | `source_value` bruts du CDM | Critere qui matche sur `source_value` |
+
+Creer un concept set :
+
+1. Cliquer sur **Create Concept Set**, nommer l'ensemble et choisir un domaine
+2. Chercher puis selectionner soit des **concepts**, soit des **codes source**
+   (les deux peuvent cohabiter dans le meme set)
+3. Enregistrer
+
+Utilisation :
+
+- Depuis le Query Builder, ajouter un concept set comme critere — le type de
+  critere genere depend de la nature du set (voir tableau ci-dessus)
+- **Resolve** : deplie l'ensemble avec ses concepts descendants
+- **Counts** : comptages de lignes et de personnes par concept sur le CDM
+
+> Les concept sets crees sont proposes immediatement dans le Query Builder :
+> la liste se rafraichit sans rechargement de page.
+
 ### Comparaison de cohortes
 
 L'onglet **Comparer** permet de comparer deux cohortes sauvegardees :
@@ -363,6 +535,87 @@ L'onglet **SQL** permet d'executer des requetes SQL en lecture seule :
 - **Export SQL** : requete SQL generee par les criteres
 - **Export direct** : export CSV sans sauvegarder la cohorte
 
+### Parcours patient (Patient Journey)
+
+Depuis l'echantillon de patients, cliquer sur un `person_id` ouvre sa **frise
+clinique complete** : tous les evenements de tous les domaines OMOP, dates et
+`source_value` compris, groupes par domaine puis par date.
+
+Les domaines se filtrent individuellement (clic sur la legende) pour isoler,
+par exemple, la seule sequence medicamenteuse.
+
+> Fonction d'inspection qualitative : elle sert a comprendre *pourquoi* un
+> patient entre dans la cohorte, pas a produire un resultat agrege.
+
+### Pathways — parcours de traitement
+
+**Acces** : onglet *Analyse → Pathways*
+
+Visualisation façon **ATLAS** des sequences de traitement : quel traitement en
+premier, lequel ensuite, dans quel ordre — rendu en **sunburst interactif**.
+
+1. Definir la cohorte cible (les criteres du Query Builder)
+2. Declarer de **1 a 20 cohortes d'evenements** : chacune porte un nom, un
+   domaine, et des `concept_id` (avec ou sans descendants) et/ou des codes source
+3. Regler les parametres :
+
+| Parametre | Defaut | Plage | Role |
+|---|---|---|---|
+| **Profondeur max** | 5 | 1–10 | Nombre d'etapes successives analysees |
+| **Effectif minimal par cellule** | 5 | 1–1000 | Masque les sequences trop rares (**protection de la confidentialite**) |
+| **Fenetre de combinaison** | 0 | 0–365 j | Deux evenements dans cette fenetre sont traites comme une **combinaison** plutot qu'une sequence |
+
+4. Lancer l'analyse (tache de fond, annulable, avec suivi de progression)
+5. **Enregistrer** le resultat sur la cohorte : il est stocke sur sa derniere
+   version et rechargeable sans recalcul
+
+> L'effectif minimal par cellule est un garde-fou : les sequences sous le seuil
+> sont supprimees du rendu et ne sont pas exportees.
+
+### Incidence
+
+**Acces** : onglet *Analyse → Incidence*
+
+Calcule un **taux d'incidence** : combien de nouveaux cas d'un evenement
+surviennent dans une population, rapporte au temps reellement passe a risque.
+
+1. Choisir la **cohorte cible** (population a risque)
+2. Choisir la **cohorte outcome** (l'evenement compte)
+3. Definir la **fenetre a risque** (*time at risk*) :
+   - debut : decalage en jours apres l'entree dans la cohorte
+   - fin : **fin de la periode d'observation**, ou **duree fixe** en jours
+4. Optionnel — **fenetre de nettoyage** (*clean window*) pour exclure les cas
+   deja survenus avant l'entree
+5. Optionnel — **stratification** par sexe et/ou tranches d'age
+6. Cliquer sur **Compute**
+
+Resultats : effectif a risque, nombre de cas, **personnes-annees**, et le taux
+**pour 1000 personnes-annees** avec son **intervalle de confiance de Poisson**.
+Les resultats stratifies s'affichent en tableau et en graphique.
+
+**Save** enregistre l'analyse (parametres + resultats) pour la retrouver plus tard.
+
+### Estimation — survie de Kaplan-Meier
+
+**Acces** : onglet *Analyse → Estimation*
+
+Estime la **probabilite de survie sans evenement** au cours du temps.
+
+1. Choisir la **cohorte cible** et la **cohorte outcome**
+2. Regler la fenetre a risque, l'**unite de temps** (jours par defaut) et le
+   **niveau de confiance** (0.95 par defaut)
+3. Optionnel — **stratification** : une courbe par strate
+4. Lancer le calcul
+
+Resultats : effectif **N**, nombre d'**evenements**, nombre de **censures**,
+**survie mediane**, et la **courbe de Kaplan-Meier** avec son intervalle de
+confiance (la mediane est marquee a S(t) = 0,5).
+
+> Definitions et hypotheses statistiques (censure, personnes-annees, IC) :
+> [METHODOLOGIE.md](METHODOLOGIE.md).
+
+
+
 ---
 
 ## 6. Workflow de Mapping
@@ -373,11 +626,20 @@ Le workflow de mapping guide le processus de correspondance entre les codes sour
 
 ### Vue d'ensemble
 
-Le processus se deroule en 4 etapes, accessibles via les onglets :
+Le processus se deroule via **6 onglets** :
 
 ```
-Dashboard → Exploration → Suggestions → Historique/Application
+Dashboard → Unmapped → Suggestions → Manual → History → Apply Log
 ```
+
+| Onglet | Role |
+|---|---|
+| **Dashboard** | Taux de mapping par domaine, evolution dans le temps |
+| **Unmapped** | Exploration des valeurs source non mappees |
+| **Suggestions** | Suggestions automatiques (SapBERT + 3 strategies internes) a valider |
+| **Manual** | Mapping manuel d'une valeur source vers un concept choisi a la main |
+| **History** | Historique des decisions, consensus, export STCM, marquage « deja synchronise » |
+| **Apply Log** | Journal des batches appliques au CDM, avec detail et **rollback** |
 
 ### Onglet 1 : Dashboard
 
@@ -505,27 +767,242 @@ Seuls les mappings ayant atteint le **consensus** (2+ utilisateurs d'accord) son
 
 > **Note** : Les decisions en statut "pending" (un seul utilisateur) ne sont pas incluses dans l'export. Demandez a un collegue de valider vos mappings pour qu'ils atteignent le consensus.
 
-### Chargement des donnees de reference
+### Onglet 5 : Manual
 
-#### Codebooks de reference
+Quand aucune suggestion ne convient, l'onglet **Manual** permet de mapper une
+valeur source a la main : chercher le concept cible (par nom, code ou ID), le
+selectionner, enregistrer. La decision suit le meme workflow de consensus que
+les decisions issues des suggestions.
 
-Les codebooks enrichissent les descriptions des codes source pour ameliorer les suggestions :
+### Onglet 6 : Apply Log
 
-- Upload via l'API : `POST /api/mapping/reference/upload`
-- Format : CSV avec colonnes code et description
-- Exemples : CCAM (actes medicaux), CIM-10 (diagnostics)
+Journal des **batches d'application**. Un batch regroupe toutes les lignes
+ecrites lors d'une meme operation d'application.
 
-#### Mappings SapBERT
+1. Selectionner un batch pour voir son **detail valeur source par valeur source**
+   (concept precedent → concept applique, nombre de lignes impactees)
+2. Bouton **Rollback** : restaure les `concept_id` precedents enregistres dans le
+   journal, puis marque le batch comme annule
 
-Les mappings SapBERT fournissent des suggestions instantanees basees sur des embeddings semantiques :
+> Le rollback restaure les valeurs originales dans la table clinique du CDM.
+> L'operation est tracee dans le journal d'audit.
 
-- Generes par le script `scripts/sapbert_mapping.py`
-- Upload via l'API : `POST /api/mapping/sapbert/upload`
-- Format : CSV avec source_code, target_concept_id, similarity, etc.
+### Marquer « deja synchronise »
+
+Certaines decisions correspondent a un mapping **deja present dans le CDM**. Pour
+ne pas les re-appliquer, l'onglet History propose de les marquer `synced` :
+
+- Une icone base de donnees signale les decisions **synchronisables** (la cible
+  est deja le seul concept mappe pour cette valeur source dans le CDM)
+- Bouton **Marquer synced** sur la selection ; l'operation est **reversible**
+  (unmark)
+- La detection se fait depuis le **cache de source values**, sans requeter le CDM
 
 ---
 
-## 7. Explorateur de Concepts
+## 7. Charger un referentiel (CCAM, CIM-10...)
+
+**Acces** : Admin, OMOP DIM
+
+Les referentiels (« codebooks ») fournissent les **libelles** des codes source.
+Sans eux, un code CCAM comme `QCJA003` reste sans description : la recherche par
+mot-cle en francais ne trouve rien et les suggestions de mapping sont degradees.
+
+> ⚠️ **Il n'existe pas d'ecran pour cet upload.** Il se fait par l'API ou par le
+> script fourni. C'est une operation d'administration, faite une fois par
+> referentiel (et rejouee a chaque mise a jour de la nomenclature).
+
+> **OPAL ne fournit pas les fichiers** (licences, mises a jour) : vous les
+> fournissez. Sources typiques : ATIH pour la CCAM et la CIM-10 FR.
+
+### Referentiels typiques
+
+| Referentiel | Domaine OMOP | Effet |
+|---|---|---|
+| CCAM FR | `Procedure` | Libelles FR des actes (recherche par mot-cle + mapping) |
+| CIM-10 FR | `Condition` | Libelles FR des diagnostics |
+| ATC | `Drug` | Libelles de classes medicamenteuses |
+
+### Format du CSV
+
+**2 colonnes minimum** : un code, une description. Le reste est auto-detecte :
+
+| Element | Detection |
+|---|---|
+| Delimiteur | `,` ou `;` — celui qui apparait le plus dans la 1re ligne |
+| Encodage | UTF-8 (BOM supporte), repli automatique en Latin-1 |
+| Colonne **code** | En-tete parmi `ccam`, `code_ccam`, `code_cim`, `cim`, `code_acte`, `code` — sinon **1re colonne** |
+| Colonne **description** | En-tete parmi `description`, `libelle`, `libellé`, `label`, `nom`, `designation`, `désignation` — sinon **2e colonne** |
+
+Exemple minimal (`ccam_fr.csv`) :
+
+```csv
+code;libelle
+QCJA003;Exérèse d'une lésion cutanée
+HBFA003;Appendicectomie
+```
+
+Les lignes dont le code **ou** la description est vide sont ignorees, et les
+**doublons de code sont dedupliques** (la premiere occurrence gagne).
+
+### Methode 1 — script `reload_codebooks.sh` *(recommande)*
+
+```bash
+OPAL_USER='admin' OPAL_PASSWORD='<mot-de-passe>' KEYCLOAK_CLIENT_ID='opal-cli' \
+  ./scripts/reload_codebooks.sh \
+  --referentiel /chemin/vers/ccam_fr.csv \
+  --domaine Procedure \
+  --nom CCAM_FR
+```
+
+> **Piege d'authentification** : le script exige le client Keycloak `opal-cli`
+> (Direct Access Grants). Si vous avez fait `source .env`, `KEYCLOAK_CLIENT_ID`
+> vaut `opal-frontend`, qui ne les a pas — d'ou l'obligation de le **forcer** sur
+> la ligne de commande. Alternative : fournir un jeton deja obtenu via `AUTH_TOKEN`.
+
+### Methode 2 — appel API direct
+
+```bash
+curl -s -X POST "http://<host>:8000/api/mapping/reference/upload" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "name=CCAM_FR" -F "domain=Procedure" -F "file=@ccam_fr.csv"
+```
+
+Reponse : `{ "name": "CCAM_FR", "domain": "Procedure", "count": 7834 }`
+
+### Remplacement et suppression
+
+- **Re-uploader avec le meme `name` remplace integralement** les lignes
+  precedentes (pas de fusion) : c'est la facon de mettre a jour une nomenclature
+- Lister : `GET /api/mapping/reference`
+- Supprimer : `DELETE /api/mapping/reference/{name}`
+
+### ⚠️ Ordre des operations — a respecter
+
+```
+1. Charger les referentiels      (POST /api/mapping/reference/upload)
+2. Peupler le Source Value Cache (Reglages → Source Value Cache → Build)
+3. (optionnel) Construire SapBERT
+```
+
+Les libelles du referentiel ne sont appliques aux valeurs source **qu'au moment
+du peuplement du cache**. Si vous chargez un referentiel **apres**, il faut
+**relancer le peuplement** du cache, sinon les libelles n'apparaitront pas dans
+l'explorateur de concepts ni dans le constructeur de cohortes.
+
+> Plusieurs referentiels peuvent couvrir le meme domaine (ex. `CCAM_FR` et
+> `CCAM_EN`). Le libelle retenu vient du codebook **le plus riche** du domaine
+> (celui qui contient le plus de codes) ; les autres servent de repli pour les
+> codes qu'il ne couvre pas ou dont le libelle est vide. Le nom du fichier n'a
+> aucune importance dans ce choix.
+
+### Mappings SapBERT pre-calcules
+
+Les mappings SapBERT alimentent les suggestions instantanees de l'onglet
+Suggestions. Deux facons de les produire :
+
+| Voie | Quand |
+|---|---|
+| **Dans l'application** — Reglages → Source Value Cache, case *SapBERT*, ou onglet SapBERT | Cas normal : le build reutilise le cache existant |
+| **Hors ligne** — `scripts/sapbert_mapping.py` puis `POST /api/mapping/sapbert/upload` | Calcul sur une autre machine (GPU dedie), ou import d'un mapping externe |
+
+Format CSV attendu par l'upload : `source_code, source_name, rank,
+target_concept_id, target_concept_code, target_concept_name,
+target_vocabulary_id, similarity`.
+
+Gestion : `GET /api/mapping/sapbert` (liste), `DELETE /api/mapping/sapbert/{domain}`.
+
+---
+
+## 8. Data Management — extraire un jeu de donnees
+
+**Acces** : Admin, OMOP DIM
+
+Cette page produit un **export de donnees patient** a partir d'une cohorte
+sauvegardee : vous choisissez les tables et les colonnes, OPAL genere un **ZIP
+contenant un CSV par table**, restreint aux patients de la cohorte.
+
+### Etape 1 — Choisir une cohorte
+
+Selectionner une cohorte sauvegardee du CDM courant (son effectif est affiche).
+C'est elle qui definit la population extraite.
+
+### Etape 2 — Choisir tables et colonnes
+
+1. Filtrer la liste des tables OMOP disponibles
+2. Cocher les tables voulues, puis, table par table, les **colonnes**
+3. Des **presets** permettent de tout selectionner ou de tout vider
+
+### Etape 3 — Options et lancement
+
+| Option | Effet |
+|---|---|
+| **Same Visit Only** | Ne garde que les enregistrements rattaches a la **meme visite** que celle qui a qualifie le patient |
+| **Apercu du schema** | Affiche les colonnes du dataset resultant, **sans extraire de donnees** — a utiliser pour verifier la selection avant de lancer |
+
+> ⚠️ **Same Visit Only** n'est disponible que si la cohorte a ete **construite
+> avec l'option « meme visite »**. Sur une autre cohorte, l'extraction est
+> refusee avec une erreur explicite : il faut recreer la cohorte avec cette
+> option.
+
+Lancer l'extraction : elle tourne **en tache de fond**, avec progression
+(`table en cours`, `n/total`). Vous pouvez quitter la page et revenir — l'UI se
+rattache a la tache en cours.
+
+### Etape 4 — Recuperer le resultat
+
+Une fois la tache terminee, **telecharger le ZIP** (un CSV par table
+selectionnee). Une extraction en cours peut etre **annulee** a tout moment.
+
+> **Limites** : le nombre d'extractions simultanees est plafonne (au-dela, la
+> demande est refusee avec un `429`) et le lancement est limite a 3 par minute.
+> Une tache ne peut etre consultee et telechargee que par **l'utilisateur qui
+> l'a lancee**.
+
+> **Donnees identifiantes** : cet export sort des donnees patient de la
+> plateforme. Les CSV produits relevent de la politique de gouvernance de votre
+> etablissement — voir [MATRICE_HABILITATION.md](MATRICE_HABILITATION.md).
+
+---
+
+## 9. Lineage — lignage ETL
+
+**Acces** : lecture pour tous les utilisateurs ayant acces au CDM ; upload
+reserve a Admin / OMOP DIM
+
+La page **Lineage** repond a la question « d'ou vient cette donnee ? » : elle
+affiche le chemin des donnees depuis les systemes sources jusqu'aux tables OMOP.
+
+### Charger une documentation ETL
+
+1. Cliquer sur **Upload ETL Doc (.html)**
+2. Choisir le fichier **HTML** de documentation ETL
+3. OPAL le parse en graphe (tables source, tables cibles, transformations)
+
+> Le format attendu est **HTML**. Un nouvel upload **remplace** le lignage
+> precedemment enregistre pour ce CDM.
+
+### Lire le diagramme
+
+Le graphe est organise en **trois couches** :
+
+| Couche | Contenu |
+|---|---|
+| **Sources** | Systemes et tables sources |
+| **Staging** | Tables intermediaires de transformation |
+| **OMOP CDM** | Tables OMOP finales |
+
+- **Rechercher** une table par son nom
+- **Zoomer / recadrer** et deplacer le graphe
+- Cliquer sur une table OMOP pour ne garder que les **chaines qui y aboutissent**
+  (remontee de proche en proche jusqu'aux sources)
+- Un bandeau resume le nombre de **tables**, de **flux** et de **systemes sources**
+
+Le lignage enregistre peut etre **supprime** pour repartir de zero.
+
+---
+
+## 10. Explorateur de Concepts
 
 **Acces** : Admin, OMOP DIM, Chercheur, Medecin
 
@@ -577,7 +1054,7 @@ Cliquer sur un concept pour afficher le panneau de detail :
 
 ---
 
-## 8. Outils OHDSI
+## 11. Outils OHDSI
 
 **Acces** : Admin, OMOP DIM
 
@@ -613,7 +1090,7 @@ Cette page permet de lancer des outils de l'ecosysteme OHDSI directement depuis 
 
 ---
 
-## 9. Parametres
+## 12. Parametres
 
 **Acces** : Admin, OMOP DIM
 
@@ -636,9 +1113,68 @@ Configurez les parametres d'analyse pour chaque CDM.
 2. Modifier les valeurs souhaitees
 3. Cliquer sur **Sauvegarder**
 
+### Source Value Cache
+
+Le **cache de valeurs source** pre-calcule, par CDM et par domaine, la liste des
+`source_value` distincts avec leurs comptages. Il est utilise par la recherche
+de concepts, l'autocompletion du constructeur de cohortes, l'explorateur de
+mapping et les exports CSV.
+
+**Sans cache, ces ecrans interrogent le CDM en direct et sont beaucoup plus
+lents.** C'est aussi le cache qui alimente l'index de l'assistant IA.
+
+| Action | Effet |
+|---|---|
+| **Build Cache** | Lance le peuplement (asynchrone, avec progression par domaine) |
+| **Refresh** | Rafraichit l'affichage de l'etat |
+| **Cancel** | Annule le peuplement en cours |
+| **Clear** | Vide le cache (tout le CDM, ou un domaine) |
+
+Chaque domaine est **commite independamment** : un domaine `done` est deja
+exploitable pendant que les autres tournent encore.
+
+> ⚠️ **Ordre a respecter** : charger les referentiels **avant** de peupler le
+> cache (voir *Charger un referentiel*). Les libelles ne sont appliques qu'au
+> moment du peuplement ; charges apres, il faut relancer le Build.
+
+### Suggestions semantiques SapBERT
+
+Depuis la meme carte, la case **Build SapBERT semantic suggestions** enchaine, apres
+le peuplement, la construction des suggestions semantiques multilingues pour les
+domaines **qui ont des libelles** (referentiels charges ou `source_name` du CDM).
+
+- Un build SapBERT peut aussi etre lance **seul** : il **reutilise le cache
+  existant**, sans le reconstruire
+- **Choisir les domaines** a construire : le domaine `Drug` est notablement plus
+  long, on peut le decocher
+- Le build est **annulable** — l'arret prend effet **apres le domaine en cours**
+- Par (CDM, domaine), un interrupteur active ou desactive l'usage des
+  suggestions SapBERT ; le reglage **survit aux reconstructions**
+
+> Quand SapBERT est desactive, les autres strategies de suggestion de mapping
+> continuent de fonctionner normalement.
+
+### LLM Cohorte (on-premise)
+
+**Reservee aux admins**, cette carte n'apparait qu'en mode `on-premise` :
+
+| Champ | Exemple | Obligatoire |
+|---|---|---|
+| **URL (base OpenAI-compatible)** | `https://llm.chu.fr/v1` | ✅ |
+| **Modele** | `llama3.1:70b-instruct` | ✅ |
+| **Cle API** | `sk-…` | ❌ — seulement si votre endpoint exige une authentification |
+
+> La cle est **chiffree** en base et **jamais reaffichee** : le champ reste vide,
+> un indicateur signale qu'une cle est enregistree. Pour la changer, retapez une
+> valeur et enregistrez.
+
+**Construire l'index RAG** reconstruit l'index semantique de l'assistant IA a
+partir du Source Value Cache du CDM selectionne. A relancer apres chaque mise a
+jour du cache.
+
 ---
 
-## 10. Audit et Administration
+## 13. Audit et Administration
 
 ### Journal d'audit
 
@@ -675,6 +1211,56 @@ Le journal d'audit trace toutes les actions effectuees dans OPAL.
   - **Activer/Desactiver** : basculer le switch
 - Cliquer sur un nom d'utilisateur pour voir le detail (ID, email, date de creation)
 
+#### Onglet Groupes d'utilisateurs
+
+**Acces** : Admin, OMOP DIM
+
+Un **groupe** rassemble des utilisateurs pour leur accorder des droits en une
+seule operation (au lieu d'un grant par personne).
+
+- **Creer** un groupe : nom, description, et eventuellement des membres d'emblee
+- **Modifier** : la description, ou la liste des membres (**la liste fournie
+  remplace l'ensemble des membres**)
+- **Ajouter / retirer** un membre individuellement
+- **Supprimer** le groupe : les acces accordes via ce groupe disparaissent avec lui
+
+### Controle d'acces par CDM
+
+**Acces** : Admin (permission `can_manage_access`)
+
+Independamment des roles, l'acces peut etre restreint **CDM par CDM** :
+
+| Action | Effet |
+|---|---|
+| **Accorder a un utilisateur** | Cet utilisateur voit et utilise ce CDM |
+| **Accorder a un groupe** | Tous les membres du groupe y ont acces |
+| **Revoquer** | Retire l'acces (utilisateur ou groupe) |
+| **Tout supprimer pour un CDM** | Retire **tous** les controles d'acces du CDM (permission dediee `can_clear_all_grants`) |
+
+> **Regle importante** : un CDM **sans aucun controle d'acces** est visible par
+> tous les utilisateurs autorises par leur role. Des qu'un premier acces est
+> accorde, le CDM devient **restreint** : seuls les beneficiaires (directs ou via
+> un groupe) y accedent.
+
+Chaque utilisateur ne voit dans le selecteur de CDM que ceux auxquels il a acces.
+
+### Partage de cohortes
+
+Une cohorte appartient a son createur. Elle peut etre partagee de trois facons :
+
+| Portee | Effet |
+|---|---|
+| **Utilisateur** | Une personne nommement designee y accede |
+| **Groupe** | Tous les membres du groupe y accedent |
+| **Tous** | Tous les utilisateurs de la plateforme y accedent |
+
+- Le partage se gere depuis la cohorte : **partager**, **lister les partages**,
+  **retirer un partage**
+- Les personnes concernees recoivent une **notification**
+- Seuls le **proprietaire** et les **admins** peuvent modifier les partages
+- Les admins et OMOP DIM disposent d'une vue **toutes les cohortes par
+  createur**, qui montre aussi ce a quoi chacun accede par partage
+
 #### Onglet Demandes d'acces
 
 - Badge indiquant le nombre de demandes en attente
@@ -687,7 +1273,7 @@ Le journal d'audit trace toutes les actions effectuees dans OPAL.
 
 ---
 
-## 11. FAQ et Depannage
+## 14. FAQ et Depannage
 
 ### Questions frequentes
 
@@ -708,6 +1294,54 @@ R : L'ecriture est limitee a la table `source_to_concept_map` et utilise un UPSE
 
 **Q : Comment sauvegarder mes donnees ?**
 R : Les donnees OPAL sont dans la base PostgreSQL `opal-db`. Utilisez `pg_dump` pour les sauvegardes. N'oubliez pas de sauvegarder aussi le fichier `.secret_key` (necessaire pour dechiffrer les mots de passe CDM).
+
+**Q : Comment je pousse un referentiel CCAM pour les procedures ?**
+R : Par l'API ou le script `scripts/reload_codebooks.sh` — **il n'y a pas
+d'ecran pour cela**. Le CSV a besoin de 2 colonnes (code, libelle) ; le domaine
+vise est `Procedure`. Attention a l'ordre : charger le referentiel **avant** de
+peupler le Source Value Cache. Pas-a-pas complet : section
+[7. Charger un referentiel](#7-charger-un-referentiel-ccam-cim-10).
+
+**Q : Comment fonctionne le cohorting par LLM ?**
+R : Vous decrivez la cohorte en francais dans l'onglet *Assistant IA* ; un LLM
+extrait les criteres, puis une recherche semantique (RAG) les fait correspondre
+aux **codes reels de votre CDM**. Vous revoyez les codes proposes avant de les
+appliquer au Query Builder. La fonctionnalite est **desactivee par defaut**, et
+requiert un Source Value Cache peuple. Voir
+[5. Assistant IA](#5-constructeur-de-cohortes) et [COHORT_LLM.md](COHORT_LLM.md).
+
+**Q : L'onglet « Assistant IA » n'apparait pas.**
+R : La fonctionnalite est desactivee cote serveur (`COHORT_LLM_MODE=off`), ou
+votre role n'y donne pas acces. C'est un choix d'installation : demandez a un
+administrateur.
+
+**Q : L'assistant IA me renvoie des criteres sans aucun code.**
+R : Le **Source Value Cache** du CDM n'est pas peuple — c'est lui qui alimente
+l'index semantique. Le construire depuis *Reglages → Source Value Cache*, puis
+reconstruire l'index RAG.
+
+**Q : J'ai charge un referentiel mais les libelles francais n'apparaissent pas.**
+R : Les libelles ne sont appliques qu'**au moment du peuplement du cache**.
+Relancez le Build du Source Value Cache apres avoir charge le referentiel.
+
+**Q : Mon vocabulaire OMOP est dans un autre schema que les donnees cliniques.**
+R : C'est prevu : utilisez les **schemas par categorie** dans la configuration
+du CDM (section [3. Gestion des CDM](#3-gestion-des-cdm)) et pointez la
+categorie `vocabulary` vers le schema partage.
+
+**Q : Comment donner acces a un CDM a toute une equipe ?**
+R : Creez un **groupe**, ajoutez-y les membres, puis accordez l'acces au groupe
+plutot qu'a chaque personne (section
+[13. Audit et Administration](#13-audit-et-administration)).
+
+**Q : Puis-je extraire les donnees d'une cohorte en CSV ?**
+R : Oui, via la page **Data Management** : choix de la cohorte, des tables et
+des colonnes, puis telechargement d'un ZIP contenant un CSV par table
+(section [8. Data Management](#8-data-management--extraire-un-jeu-de-donnees)).
+
+**Q : J'ai applique un mapping par erreur, puis-je revenir en arriere ?**
+R : Oui. L'onglet **Apply Log** du workflow de mapping liste les batches
+appliques et permet un **rollback** qui restaure les `concept_id` precedents.
 
 ### Depannage
 

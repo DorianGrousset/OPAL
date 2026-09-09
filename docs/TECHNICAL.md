@@ -18,6 +18,13 @@ Ce document decrit l'architecture interne, les choix de conception, le modele de
 10. [Integration OHDSI](#10-integration-ohdsi)
 11. [Notifications temps reel (WebSocket)](#11-notifications-temps-reel-websocket)
 12. [Pathways Analysis](#12-pathways-analysis)
+12 bis. [Resolution des schemas OMOP (SchemaMap)](#12-bis-resolution-des-schemas-omop-schemamap)
+12 ter. [Cache de valeurs source](#12-ter-cache-de-valeurs-source)
+12 quater. [Assistant IA de cohortes (cohort-llm)](#12-quater-assistant-ia-de-cohortes-cohort-llm)
+12 quinquies. [Module SapBERT](#12-quinquies-module-sapbert)
+12 sexies. [Lignage ETL](#12-sexies-lignage-etl)
+12 septies. [Extraction de donnees (Data Management)](#12-septies-extraction-de-donnees-data-management)
+12 octies. [Incidence et estimation](#12-octies-incidence-et-estimation)
 13. [Theme et UI](#13-theme-et-ui)
 14. [Audit et tracabilite](#14-audit-et-tracabilite)
 15. [Infrastructure Docker](#15-infrastructure-docker)
@@ -125,7 +132,7 @@ backend/
 ├── i18n/
 │   ├── en.json                # Traductions EN (cache au demarrage)
 │   └── fr.json                # Traductions FR (cache au demarrage)
-└── tests/                     # 51 fichiers de tests (601 tests)
+└── tests/                     # 59 fichiers de tests (560+ cas)
 ```
 
 ### Configuration (`config.py`)
@@ -231,7 +238,7 @@ Module utilitaire qui evite de dupliquer la logique connexion CDM dans 5+ router
 | React Router 6 | Routing SPA |
 | i18next | Internationalisation (FR/EN) |
 | keycloak-js | Client OIDC |
-| Vitest + Testing Library | Tests unitaires et composants (84 tests) |
+| Vitest + Testing Library | Tests unitaires et composants (17 fichiers, 130 cas) |
 
 ### Architecture
 
@@ -1203,6 +1210,284 @@ L'analyse s'execute en tache de fond (FastAPI `BackgroundTasks`) avec progressio
 
 ---
 
+## 12 bis. Resolution des schemas OMOP (`SchemaMap`)
+
+Un deploiement OMOP reel ne range pas forcement toutes ses tables dans un seul
+schema PostgreSQL : le **vocabulaire** est souvent partage entre plusieurs CDM.
+OPAL resout donc **chaque table via son categorie**.
+
+### Categories
+
+Les tables sont classees selon les categories officielles CDM v5.4, dans
+`config.OMOP_TABLE_CATEGORIES` / `TABLE_CATEGORY` :
+
+`clinical`, `health_system`, `health_economics`, `derived`, `metadata`, `vocabulary`
+
+### La classe `SchemaMap`
+
+```python
+class SchemaMap(str):
+    def schema_for(self, table: str) -> str: ...   # nom du schema seul
+    def t(self, table: str) -> str: ...            # "schema.table" qualifie
+```
+
+`SchemaMap` **sous-classe `str`**, et sa valeur de chaine est le **schema par
+defaut** du CDM. Consequence pratique : utilise directement comme une chaine, il
+se comporte exactement comme dans le modele mono-schema historique — ce qui a
+permis d'introduire les schemas multiples **sans casser** le code existant.
+
+```python
+f"SELECT * FROM {schema.t('concept')}"            # vocab_schema.concept
+psysql.Identifier(schema.schema_for('person'))    # schema clinique
+```
+
+### Construction et priorites
+
+`build_schema_map(cdm, settings)` assemble la table de resolution :
+
+| Element | Source | Priorite |
+|---|---|---|
+| Schema par defaut | `AnalysisSettings.omop_schema`, sinon `CdmConfig.omop_schema`, sinon `DEFAULT_OMOP_SCHEMA` | settings > config |
+| Surcharges par categorie | `CdmConfig.schema_categories` puis `AnalysisSettings.schema_categories` (JSON) | settings ecrasent config |
+
+Une categorie **sans entree** retombe sur le schema par defaut. Tous les noms
+passent par `safe_identifier()` a la construction — la validation est faite une
+fois, en amont, et non a chaque interpolation.
+
+`get_cdm_connection(db, cdm_name)` retourne `(connection, schema_map)` : tout
+acces CDM part de la.
+
+> **Regle de contribution** : ne jamais interpoler un nom de schema « en dur »
+> dans une requete. Passer par `schema.t(table)` en f-string, ou
+> `schema.schema_for(table)` dans un `psycopg2.sql.Identifier`.
+
+L'endpoint `GET /api/cdm/categories` expose la carte categorie → tables ;
+le composant `SchemaCategoriesEditor` s'en sert pour proposer un champ par
+categorie.
+
+---
+
+## 12 ter. Cache de valeurs source
+
+Le **`source_value_cache`** est la table pivot de plusieurs fonctionnalites : il
+pre-calcule, par (CDM, domaine), les `source_value` distincts avec leurs
+comptages, dans la **base applicative** — evitant de retaper le CDM externe a
+chaque recherche.
+
+### Consommateurs
+
+| Consommateur | Usage |
+|---|---|
+| Explorateur de concepts | Recherche par valeur source, export CSV |
+| Constructeur de cohortes | Autocompletion (`/search-source-value/fast`) |
+| Explorateur de mapping | Liste des valeurs non mappees |
+| Build SapBERT | Corpus de libelles a encoder |
+| RAG de l'assistant IA | Source de l'index semantique |
+| `mark-synced` | Detection des decisions deja refletees dans le CDM |
+
+### Tables
+
+| Table | Role |
+|---|---|
+| `source_value_cache` | Les valeurs elles-memes (`cdm_name`, `domain`, `source_value`, comptages, `source_atc`) |
+| `source_value_cache_status` | Etat par domaine : `pending` / `running` / `done` / `error`, `row_count`, message d'erreur |
+
+### Peuplement
+
+Tache de fond soumise au `ThreadPoolExecutor` borne (`MAX_WORKER_THREADS`),
+suivie par `/status` :
+
+- **Commit par domaine** : chaque domaine est valide independamment, donc
+  exploitable des qu'il est `done`
+- **Annulable** : le drapeau d'annulation est verifie entre les etapes, et la
+  requete PostgreSQL en cours est annulee via `conn.cancel()`
+- **Reconciliation des statuts obsoletes** : un domaine laisse en `running` par
+  un crash ou un redemarrage est detecte a la lecture de `/status` (aucune tache
+  active) et corrige — sinon l'UI tournerait indefiniment
+- **Enrichissement par referentiel** : `utils/reference_labels.py` remplit les
+  `source_name` vides depuis `reference_codebooks` **pendant** le peuplement.
+  D'ou la contrainte d'ordre : referentiels d'abord, cache ensuite.
+
+### Selection du codebook
+
+`get_reference_label_map()` choisit **par nombre de codes, pas par nom** : pour
+un domaine, le codebook le plus riche est prioritaire, les autres servent de
+repli pour les codes qu'il ne couvre pas (ou dont le libelle est vide). Aucune
+convention de nommage (`_FR`, `_EN`…) n'est requise — les codebooks de
+production portent des noms arbitraires.
+
+---
+
+## 12 quater. Assistant IA de cohortes (`cohort-llm`)
+
+### Repartition des roles
+
+```
+Navigateur → Backend OPAL (/api/cohort-llm/*, auth Keycloak)
+           → opal-llm (:8001, interne)
+                 ├─ generation : Ollama embarque OU LLM externe OpenAI-compatible
+                 └─ RAG        : index bati sur source_value_cache
+                                 + embeddings via opal-sapbert (POST /encode)
+```
+
+Le backend est un **pur relais HTTP** : aucune inference n'y tourne. Le
+navigateur ne joint jamais `opal-llm` — la surface exposee reste le backend
+authentifie.
+
+### Modes (`COHORT_LLM_MODE`)
+
+| Mode | Generation | Conteneur | RAG |
+|---|---|---|---|
+| `off` *(defaut)* | — | aucun | — |
+| `embedded` | Ollama local (modele telecharge au 1er run) | `opal-llm` | oui |
+| `on-premise` | endpoint OpenAI-compatible du site | `opal-llm` (RAG seul) | oui |
+
+Le RAG tourne dans les **deux** modes actifs ; seule la generation change.
+
+### Configuration on-premise et secret
+
+| Table | Contenu |
+|---|---|
+| `cohort_llm_config` | Ligne unique (`id=1`) : `base_url`, `model` |
+| `cohort_llm_keys` | **Trousseau par `base_url`** : cle API chiffree Fernet |
+
+La cle est indexee **par endpoint**, pas globalement : changer de `base_url`
+rappelle la cle propre a cet endpoint au lieu d'en ecraser une seule. Elle est
+chiffree avec `SECRET_KEY` (`utils/crypto.py`) et **jamais renvoyee en clair** —
+le `GET /settings` ne remonte qu'un indicateur de presence. Une valeur vide
+efface la cle. L'en-tete `Authorization: Bearer` n'est envoye que si une cle
+existe, ce qui autorise un vLLM/Ollama interne sans authentification.
+
+### Dependance a SapBERT
+
+Le RAG **n'embarque pas de modele** : il appelle `opal-sapbert` (`POST /encode`),
+le meme embedder que les suggestions de mapping — **un seul modele en VRAM pour
+les deux fonctionnalites**. Si le module SapBERT est off, l'extraction des
+criteres fonctionne toujours mais les concept-sets ne sont plus pre-remplis.
+
+### Index RAG
+
+Construit a partir du `source_value_cache` du CDM, via
+`POST /api/cohort-llm/rebuild` (relaye en `POST /rebuild/{cdm_name}` cote
+service). A rejouer apres chaque mise a jour du cache, sinon l'index reference
+des valeurs source perimees.
+
+---
+
+## 12 quinquies. Module SapBERT
+
+Service `opal-sapbert` (:8002, interne), modele multilingue
+`SapBERT-UMLS-2020AB-all-lang-from-XLMR` **cuit dans l'image**. Module
+**independant** de `COHORT_LLM_MODE`, **actif par defaut** (`SAPBERT_MODE`).
+
+### Deux chemins d'appel — a ne pas confondre
+
+| Fonctionnalite | Quand le runner est appele |
+|---|---|
+| **Suggestions de mapping** | **Au build uniquement.** Le top-K est pre-calcule dans `sapbert_mappings` ; la suggestion fait une simple lecture en base |
+| **RAG assistant IA** | **En direct**, a chaque requete (`POST /encode`) |
+
+Consequence : SapBERT desactive ⇒ les suggestions de mapping deja construites
+restent disponibles, et les 3 autres strategies continuent de tourner.
+
+### Tables
+
+| Table | Role |
+|---|---|
+| `sapbert_mappings` | Top-K (source → concept cible, similarite, rang) par CDM/domaine |
+| `sapbert_domain_state` | Etat de build et **interrupteur par (CDM, domaine)**, contrainte d'unicite sur le couple — le reglage survit aux reconstructions |
+
+Le build (`modules/mapping/sapbert_build.py`) **reutilise le cache de valeurs
+source existant** : il ne requete pas le CDM. Il est annulable, l'arret prenant
+effet **entre deux domaines**. `SAPBERT_BATCH_SIZE` regle la taille de lot
+d'encodage (a baisser si la VRAM sature).
+
+Client backend : `modules/sapbert_client.py`, authentifie par
+`SAPBERT_RUNNER_TOKEN`.
+
+---
+
+## 12 sexies. Lignage ETL
+
+`modules/lineage/parser.py` transforme une **documentation ETL HTML** en graphe,
+stocke tel quel dans `lineage_docs.lineage_json` (une ligne par CDM ; un nouvel
+upload remplace le precedent).
+
+### Pipeline de parsing
+
+```
+HTML → nettoyage      _clean_browser_saved_html()   artefacts "Save As" du navigateur
+     → decoupage      split_repertoires()           sections <h1> par repertoire
+     → blocs          split_transformations()       blocs <h2> de transformation
+     → parsing        parse_transformation_block()  source, cible, transformations
+     → enrichissement _add_inheritance_edges()      heritage de classes Java
+                      _resolve_omop_intermediates() noeuds "omop" en fait staging
+     → chaines        _build_omop_chains()          remontee amont par table OMOP
+```
+
+Le parseur est **tolerant aux specificites du format source** : il resout les
+syntaxes de classes Java (`class 'x' extends 'Base'`), deduit la **couche**
+(`source` / `staging` / `omop`) et le **systeme source** depuis les noms de
+tables, et corrige les noeuds intermediaires mal classes.
+
+### Sortie
+
+| Endpoint | Contenu |
+|---|---|
+| `GET /{cdm}` | Graphe complet : `nodes`, `edges`, `source_systems` |
+| `GET /{cdm}/omop-chains` | Chaines amont par table OMOP (filtrables par `table`) |
+| `GET /{cdm}/summary` | Compteurs de synthese |
+
+Le frontend (`LineagePage`) rend le graphe en trois couches, avec zoom, recherche
+et parcours amont par BFS inverse depuis une table OMOP.
+
+---
+
+## 12 septies. Extraction de donnees (Data Management)
+
+`modules/datamanagement/extractor.py` produit un **ZIP contenant un CSV par
+table** selectionnee, restreint aux patients d'une cohorte.
+
+| Aspect | Implementation |
+|---|---|
+| Execution | Tache de fond, `task_id` + polling `/extract/status/{task_id}` |
+| Progression | `completed` / `total` par table, plus l'etape en cours |
+| Concurrence | Nombre de taches actives plafonne ; au-dela → `429`. Les taches terminees sont purgees pour liberer des places |
+| Debit | `POST /extract/start` limite a 3/min |
+| Cloisonnement | Une tache n'est consultable et telechargeable que par **l'utilisateur qui l'a lancee** (`_assert_task_owner`) ; l'acces CDM est verifie au lancement |
+| `same_visit_only` | Refuse en `400` si la cohorte n'a **pas** ete construite avec `sameVisit` — l'option n'aurait aucun sens sinon |
+| Apercu | `POST /extract/schema` retourne les colonnes du dataset **sans extraire de donnees** |
+
+---
+
+## 12 octies. Incidence et estimation
+
+### Incidence (`modules/incidence/engine.py`)
+
+`build_incidence_sql()` genere la requete (cohorte cible datee × cohorte
+outcome × fenetre a risque), puis `compute_incidence()` agrege en Python :
+
+- **Personnes-annees** cumulees sur la fenetre a risque, bornee par la fin de la
+  periode d'observation ou une duree fixe
+- **Fenetre de nettoyage** (`clean_window`) pour exclure les cas prevalents
+- **Stratification** par sexe et/ou tranches d'age (`_classify_age`)
+- **Intervalle de confiance de Poisson** approche (`_poisson_ci`), taux exprime
+  pour 1000 personnes-annees
+
+### Estimation (`modules/estimation/survival.py`)
+
+Kaplan-Meier : `_build_km_sql()` produit les couples (temps, evenement/censure),
+la courbe de survie et son intervalle de confiance sont calcules cote Python,
+avec stratification optionnelle (une courbe par strate) et unite de temps
+parametrable.
+
+Les deux endpoints de calcul sont limites a **3/min** ; les analyses sont
+sauvegardables (parametres + resultats) pour relecture sans recalcul.
+
+> Hypotheses statistiques et definitions : [METHODOLOGIE.md](METHODOLOGIE.md).
+
+---
+
 ## 13. Theme et UI
 
 ### Systeme de themes
@@ -1369,7 +1654,7 @@ app.dependency_overrides[get_db] = override_get_db
 - **`omop_mock.py`** : Mock reutilisable de connexion psycopg2 avec sequences de reponses pre-configurees (dict→fetchone, list→fetchall, Exception→erreur)
 - **`README.md`** : Documentation complete de l'architecture de test
 
-### Couverture de tests (51 fichiers, 601 tests backend + 84 frontend)
+### Couverture de tests (59 fichiers / 560+ cas backend, 17 fichiers / 130 cas frontend)
 
 #### Tests existants (v1.0)
 
@@ -1432,7 +1717,7 @@ app.dependency_overrides[get_db] = override_get_db
 | `test_rate_limit.py` | Rate limiting par endpoint |
 | `test_sql_safety.py` | Validation safe_identifier, longueur max |
 
-#### Tests frontend (6 fichiers, 84 tests)
+#### Tests frontend (17 fichiers, 130 cas)
 
 | Fichier | Couverture |
 |---------|-----------|
@@ -1446,14 +1731,14 @@ app.dependency_overrides[get_db] = override_get_db
 ### Execution
 
 ```bash
-# Backend (601 tests)
+# Backend (59 fichiers de tests)
 cd backend
 pip install -r requirements-dev.txt
 pytest tests/ -v                          # Tous les tests
 pytest tests/test_api.py -v               # Un fichier specifique
 pytest tests/test_api.py::test_function -v  # Un test specifique
 
-# Frontend (84 tests)
+# Frontend (17 fichiers de tests)
 cd frontend
 npx vitest run
 ```

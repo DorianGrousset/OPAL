@@ -3,7 +3,7 @@
 **Version** : 2.0.0
 **Base URL** : `http://<host>:8000/api`
 **Authentification** : Keycloak (Bearer token) si `AUTH_ENABLED=true`
-**Total endpoints** : 140+
+**Total endpoints** : 220
 
 ---
 
@@ -87,8 +87,25 @@ curl -s "http://<host>:8000/api/quality/snapshots/CHU_OMOP/Dashboard/latest"
 9. [Administration](#9-administration)
 10. [Modeles de donnees](#10-modeles-de-donnees)
 11. [Authentification et RBAC](#11-authentification-et-rbac)
-12. [Rate Limiting](#24-rate-limiting)
-13. [Codes d'erreur HTTP](#25-codes-derreur-http)
+12. [Concept Sets](#12-concept-sets--apiconcept-sets)
+13. [Incidence](#13-incidence--apiincidence)
+14. [Estimation](#14-estimation--apiestimation)
+15. [Gestion de donnees](#15-gestion-de-donnees--apidatamanagement)
+16. [Controle d'acces CDM](#16-controle-dacces-cdm--apicdm-access)
+17. [Notifications](#17-notifications--apinotifications)
+18. [Favoris](#18-favoris--apifavorites)
+19. [Requetes sauvegardees](#19-requetes-sauvegardees--apisaved-queries)
+20. [Templates de cohortes](#20-templates-de-cohortes--apicohort-templates)
+21. [Partage de cohortes](#21-partage-de-cohortes--apicohorts)
+22. [Recherche globale](#22-recherche-globale--apisearch)
+23. [Groupes d'utilisateurs](#23-groupes-dutilisateurs--apigroups)
+24. [Lineage ETL](#24-lineage-etl--apilineage)
+25. [Assistant IA de cohortes](#25-assistant-ia-de-cohortes--apicohort-llm)
+26. [Module SapBERT](#26-module-sapbert--apisapbert)
+27. [Activite recente](#27-activite-recente--apirecent)
+28. [WebSocket — Notifications temps reel](#28-websocket--notifications-temps-reel)
+29. [Rate Limiting](#29-rate-limiting)
+30. [Codes d'erreur HTTP](#30-codes-derreur-http)
 
 ---
 
@@ -231,6 +248,24 @@ Met a jour une connexion CDM. Tous les champs sont optionnels.
 ### `DELETE /api/cdm/{cdm_name}`
 
 Supprime une connexion CDM.
+
+### `GET /api/cdm/categories`
+
+Retourne les **categories de tables OMOP CDM v5.4** et les tables de chaque
+categorie. Sert a l'UI de configuration CDM pour proposer un schema different
+par categorie (`schema_categories`).
+
+**Response :**
+```json
+{
+  "categories": ["clinical", "health_system", "health_economics", "derived", "metadata", "vocabulary"],
+  "tables": { "person": "clinical", "concept": "vocabulary", "care_site": "health_system" }
+}
+```
+
+> Une categorie sans entree dans `schema_categories` retombe sur `omop_schema`.
+> Cas d'usage typique : vocabulaire OMOP partage dans un schema commun a
+> plusieurs CDM.
 
 ### `GET /api/cdm/{cdm_name}/settings`
 
@@ -380,25 +415,11 @@ Exporte une table d'un snapshot en CSV.
 
 **Response :** Fichier CSV (`Content-Disposition: attachment`).
 
-### `GET /api/quality/timeline/{cdm_name}`
+### ~~`GET /api/quality/timeline/{cdm_name}`~~ *(SUPPRIME)*
 
-Evolution des KPIs a travers les versions de snapshots.
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `domain` | query, string, optional | Filtrer sur un domaine |
-
-**Response :**
-```json
-{
-  "cdm_name": "CHU_OMOP",
-  "timelines": {
-    "Condition": [
-      { "snapshot_id": 30, "version": 2, "created_at": "...", "total_records": 500000, "pct_terms_mapped": 75.0 }
-    ]
-  }
-}
-```
+Endpoint retire. Pour suivre l'evolution des KPIs a travers les versions, utiliser
+`GET /api/quality/snapshots/{cdm_name}/{domain}` (liste versionnee des snapshots)
+ou `POST /api/quality/compare` (comparaison de deux snapshots).
 
 ### `POST /api/quality/compare`
 
@@ -430,6 +451,13 @@ Si `snapshot_id_a/b` sont `null`, utilise le dernier snapshot de chaque CDM.
   "results_b": { "..." }
 }
 ```
+
+### `GET /api/quality/analyzed-domains/{cdm_name}`
+
+Liste les domaines ayant **au moins un snapshot** d'analyse pour ce CDM. Utilise
+par l'UI pour n'afficher que les domaines dont des resultats existent.
+
+**Response :** `{ "cdm_name": "CHU_OMOP", "domains": ["Condition", "Drug"] }`
 
 ### `GET /api/quality/report/{cdm_name}`
 
@@ -860,6 +888,31 @@ Interroge le statut d'une analyse de pathways.
 
 Annule une analyse de pathways.
 
+### Persistance des resultats d'analyse
+
+#### `GET /api/cohorts/characterize/active`
+
+Retourne la tache de caracterisation en cours, s'il y en a une :
+`{ "task_id": "...", "status": "running", "cdm_name": "CHU_OMOP" }`, sinon
+`{ "task_id": null, "status": "none" }`. Permet a l'UI de se re-attacher a une
+analyse lancee avant un rafraichissement de page.
+
+#### `PUT /api/cohorts/{cohort_id}/pathways-result`
+
+Enregistre le resultat d'une analyse de parcours sur la **derniere version** de
+la cohorte (colonne `pathways_json` de `cohort_versions`). Le corps est le
+resultat brut renvoye par `POST /api/cohorts/pathways`.
+
+Acces controle comme la cohorte elle-meme (proprietaire, partage, ou admin).
+
+#### `GET /api/cohorts/{cohort_id}/pathways-result`
+
+Relit le resultat de parcours enregistre sur la derniere version. `404` si la
+cohorte n'a aucune version.
+
+> Meme principe que `PUT`/`GET /api/cohorts/{cohort_id}/characterization` pour la
+> caracterisation : les analyses couteuses sont calculees une fois puis relues.
+
 ### Diff de versions
 
 #### `GET /api/cohorts/{cohort_id}/diff`
@@ -961,9 +1014,11 @@ Liste paginee des termes source non mappes.
 }
 ```
 
-#### `GET /api/mapping/unmapped/{cdm_name}/{domain}/export`
+#### ~~`GET /api/mapping/unmapped/{cdm_name}/{domain}/export`~~ *(N'EXISTE PAS)*
 
-Exporte tous les termes non mappes en CSV.
+Il n'y a pas d'export CSV des termes non mappes sur cette route. Pour exporter
+des valeurs source, utiliser `GET /api/concepts/search-source-value/export`
+(export depuis le cache de source values, section 6).
 
 ### 5.3 Auto-Suggestion
 
@@ -1135,6 +1190,55 @@ Previsualise l'impact avant application. Ne comptabilise que les decisions **con
 #### `GET /api/mapping/apply/export/{cdm_name}/{domain}`
 
 Exporte les mappings **consensus** au format CSV STCM. Les decisions en attente (un seul utilisateur) sont exclues.
+
+#### `GET /api/mapping/apply/history/{cdm_name}`
+
+Liste les **batches d'application** qui ont touche ce CDM en tant que cible.
+Un batch regroupe toutes les lignes ecrites lors d'un meme `POST /api/mapping/apply`.
+
+**Response (par batch) :** `batch_id`, `domain`, `applied_by`, `applied_at`
+(premiere ligne du batch), `total_rows`, `rolled_back`.
+
+#### `GET /api/mapping/apply/batch/{batch_id}`
+
+Detail complet d'un batch, **valeur source par valeur source** : concept
+precedent, concept applique, nombre de lignes, avec les libelles de concepts
+resolus depuis le CDM quand il est joignable.
+
+`404` si le `batch_id` est inconnu.
+
+#### `POST /api/mapping/apply/rollback/{batch_id}`
+
+Annule un batch d'application : restaure les `previous_concept_id` enregistres
+dans le journal `mapping_apply_log`. Le batch est ensuite marque `rolled_back`.
+
+> Ne s'applique qu'aux batches reellement ecrits dans le CDM. Un batch deja
+> annule n'est pas rejoue.
+
+---
+
+### 5.5 bis Marquage « deja synchronise »
+
+Ces routes servent a distinguer les decisions **deja refletees dans le CDM** de
+celles qui restent a appliquer, sans requeter le CDM en direct : les candidats
+sont detectes depuis le **cache de source values**.
+
+#### `POST /api/mapping/decisions/mark-synced`
+
+Marque `synced` les decisions `approved`/`modified` dont la cible est **deja le
+seul et unique concept** mappe dans le CDM pour cette valeur source.
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | body, string | CDM cible |
+| `domain` | body, string, optional | Restreindre a un domaine |
+| `source_values` | body, string[], optional | Restreindre a des valeurs source |
+
+**Roles** : data-manager (ou admin). Acces CDM verifie.
+
+#### `POST /api/mapping/decisions/unmark-synced`
+
+Operation inverse : retire le marquage `synced`. Memes parametres.
 
 ### 5.6 History & Audit
 
@@ -1436,6 +1540,91 @@ Compteurs (records/persons) pour une liste de concept_ids.
 
 Maximum 200 concept_ids par requete.
 
+### `GET /api/concepts/search-source-value/fast`
+
+Recherche rapide de valeurs source : **valeurs distinctes uniquement**, sans
+comptage de lignes ni de personnes. Concue pour l'autocompletion du constructeur
+de cohortes, ou la latence prime sur les statistiques.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | query, string | CDM cible |
+| `q` | query, string | Terme recherche (**minimum 2 caracteres**, sinon retourne une liste vide) |
+| `domain` | query, string, optional | Restreindre a un domaine |
+| `limit` | query, int | Defaut 20, max 100 |
+
+Sert le **cache de source values** en priorite ; retombe sur une requete live du
+CDM si le domaine n'est pas cache.
+
+### `POST /api/concepts/counts/source`
+
+Comptages par `source_concept_id` (la variante `POST /api/concepts/counts`
+compte par `concept_id` standard).
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `concept_ids` | body, int[] | Concepts a compter |
+| `cdm_name` | query, string | CDM cible |
+| `domains` | body, string[], optional | **Restreindre aux domaines utiles — beaucoup plus rapide** |
+
+---
+
+### Cache de source values
+
+Le cache pre-calcule les `source_value` distincts avec leurs comptages, par CDM
+et par domaine, dans la base applicative. Il alimente la recherche de concepts,
+l'autocompletion du constructeur de cohortes, l'explorateur de mapping et les
+exports CSV.
+
+#### `GET /api/concepts/source-value-cache/status`
+
+Etat de peuplement du cache pour tous les domaines d'un CDM.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | query, string | CDM cible |
+
+**Response :** un statut par domaine (`pending`, `running`, `done`, `error`) avec
+la progression. Chaque domaine est **commite independamment** : un domaine `done`
+est exploitable meme si les autres tournent encore.
+
+> Un statut `running` laisse par un crash ou un redemarrage est reconcilie
+> automatiquement a la lecture (pas de spinner bloque indefiniment).
+
+#### `POST /api/concepts/source-value-cache/populate`
+
+Lance le peuplement **asynchrone** du cache. Repondre immediatement ; suivre
+l'avancement via `/status`.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | query, string | CDM cible |
+| `enable_sapbert` | query, bool | Defaut `false`. Si `true`, enchaine la construction des suggestions SapBERT par domaine a partir du cache fraichement peuple (ignore si le module SapBERT est off) |
+
+> **Ordre important** : charger les codebooks de reference (`POST /api/mapping/reference/upload`)
+> **avant** de peupler le cache. Les libelles du referentiel ne sont appliques
+> qu'au moment du peuplement ; charges apres, il faut relancer le populate.
+
+#### `POST /api/concepts/source-value-cache/cancel`
+
+Annule un peuplement en cours (`404` si aucun n'est actif pour ce CDM). Annule
+aussi la requete PostgreSQL en cours cote CDM.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | query, string | CDM cible |
+
+#### `DELETE /api/concepts/source-value-cache`
+
+Vide le cache d'un CDM, ou d'un seul domaine.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | query, string | CDM cible |
+| `domain` | query, string, optional | Limiter a un domaine |
+
+**Response :** `{ "deleted": 12345 }`
+
 ### `GET /api/concepts/domains`
 
 Liste les `domain_id` distincts de la table `concept`.
@@ -1460,6 +1649,12 @@ Lance des conteneurs Docker OHDSI et streame leurs logs.
 | `achilles-export` | Export Achilles Results |
 | `dqd` | Data Quality Dashboard |
 | `cdmonboarding` | CDM Onboarding Report |
+
+### `GET /api/ohdsi/config`
+
+Indicateur d'activation pour le frontend — **toujours disponible**, meme quand le
+module est desactive : `{ "enabled": false }`. L'UI masque l'onglet OHDSI si
+`enabled` est `false`.
 
 ### `POST /api/ohdsi/run/{service_name}`
 
@@ -1516,12 +1711,17 @@ data: {"status": "done", "lines": [], "offset": 250}
 
 Retourne tous les logs accumules (pour rechargement de page).
 
-### `GET /api/ohdsi/files/{path}`
+### `GET /api/ohdsi/files/` et `GET /api/ohdsi/files/{path}`
 
 Browse et telecharge les fichiers de sortie OHDSI.
 
 - Si `path` est un dossier : retourne la liste des fichiers (JSON array).
 - Si `path` est un fichier : retourne le fichier en telechargement.
+- Sans `path` (route `/files/`) : liste la racine des sorties du runner.
+
+> **Cloisonnement par CDM** : les sorties sont rangees en `<cdm_name>/<service>/...`.
+> Le **premier segment** du chemin est controle contre les droits d'acces CDM de
+> l'appelant — `403` si l'utilisateur n'a pas acces a ce CDM.
 
 ---
 
@@ -1854,8 +2054,7 @@ Extraction de donnees et monitoring ETL.
 | `GET` | `/extract/download/{task_id}` | Telecharger le CSV d'une extraction terminee | admin, data-manager |
 | `POST` | `/extract/cancel/{task_id}` | Annuler une extraction en cours | admin, data-manager |
 | `GET` | `/extract/active` | Recuperer la tache d'extraction en cours | admin, data-manager |
-| `POST` | `/extract/preview` | Previsualiser les donnees extraites (limite) | admin, data-manager |
-| `POST` | `/extract/download` | Telecharger le dataset complet en CSV (sync) | admin, data-manager |
+| `POST` | `/extract/schema` | Previsualiser le schema du dataset resultant (colonnes, sans donnees) | admin, data-manager |
 
 ---
 
@@ -1976,7 +2175,175 @@ Gestion de groupes pour le controle d'acces et le partage.
 
 ---
 
-## 24. Rate Limiting
+## 24. Lineage ETL — `/api/lineage`
+
+Documentation de lignage ETL : une documentation HTML est televersee, parsee en
+graphe source → cible avec transformations, puis rendue comme diagramme
+interactif (page **Lineage**).
+
+| Methode | Endpoint | Description | Roles |
+|---------|----------|-------------|-------|
+| `POST` | `/upload` | Televerser et parser une doc ETL HTML pour un CDM | admin, data-manager |
+| `GET` | `/{cdm_name}` | Graphe de lignage complet du CDM | Tous (acces CDM) |
+| `GET` | `/{cdm_name}/omop-chains` | Chaines de transformation aboutissant aux tables OMOP | Tous (acces CDM) |
+| `GET` | `/{cdm_name}/summary` | Statistiques de synthese (tables, colonnes, transformations) | Tous (acces CDM) |
+| `DELETE` | `/{cdm_name}` | Supprimer le lignage enregistre du CDM | admin, data-manager |
+
+### `POST /api/lineage/upload`
+
+**Content-Type :** `multipart/form-data`
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | form, string | CDM auquel rattacher le lignage |
+| `file` | form, file | Documentation ETL au format **HTML** |
+
+Un nouvel upload **remplace** le lignage precedent du CDM.
+
+### `GET /api/lineage/{cdm_name}/omop-chains`
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `table` | query, string, optional | Ne retourner que les chaines aboutissant a cette table OMOP |
+
+---
+
+## 25. Assistant IA de cohortes — `/api/cohort-llm`
+
+Relais vers le service `opal-llm` (« cohorting par LLM »). Le backend ne fait
+**aucune inference** : il transmet en HTTP. Le navigateur ne joint jamais
+`opal-llm` directement.
+
+> Fonctionnalite **opt-in** via `COHORT_LLM_MODE` (`off` | `embedded` | `on-premise`).
+> Guide complet : [COHORT_LLM.md](COHORT_LLM.md) · resolution des medicaments :
+> [COHORT_LLM_MEDICAMENTS.md](COHORT_LLM_MEDICAMENTS.md).
+
+| Methode | Endpoint | Description | Roles |
+|---------|----------|-------------|-------|
+| `GET` | `/config` | Indicateur d'activation (toujours disponible) | Tous |
+| `POST` | `/draft` | Generer un brouillon de cohorte depuis un texte libre | Tous (acces CDM) |
+| `GET` | `/settings` | Lire la config du LLM on-premise (**cle masquee**) | admin |
+| `PUT` | `/settings` | Ecrire la config du LLM on-premise | admin |
+| `POST` | `/rebuild` | Reconstruire l'index RAG d'un CDM | admin |
+| `GET` | `/health` | Sante du service `opal-llm` (proxy) | Tous |
+
+### `GET /api/cohort-llm/config`
+
+`{ "enabled": true, "mode": "on-premise" }`. Repond meme quand la fonctionnalite
+est desactivee — l'UI s'en sert pour masquer l'onglet « Assistant IA ».
+
+### `POST /api/cohort-llm/draft`
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `prompt` | body, string | Description de la cohorte en langage naturel (non vide) |
+| `cdm_name` | body, string | CDM sur lequel resoudre les codes |
+
+Retourne un brouillon : demographie + criteres, chaque terme resolu en
+**`source_value` reels du CDM** via le RAG.
+
+**Pre-requis** : le `source_value_cache` du CDM doit etre peuple (sinon les
+criteres sortent sans codes, `no_match`), et le module SapBERT doit etre actif
+pour que les concept-sets soient pre-remplis.
+
+`503` si `COHORT_LLM_MODE=off`, ou si (mode `on-premise`) l'endpoint LLM n'est
+pas configure dans les Reglages.
+
+### `GET` / `PUT /api/cohort-llm/settings` *(admin)*
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `base_url` | string | Base OpenAI-compatible, ex. `https://llm.chu.fr/v1` |
+| `model` | string | Nom du modele, ex. `llama3.1:70b-instruct` |
+| `api_key` | string, **optionnel** | Requise seulement si l'endpoint exige une authentification |
+
+> La cle est **chiffree (Fernet)** en base et **jamais renvoyee en clair** : le
+> `GET` retourne un indicateur de presence, pas la valeur. Pour la changer,
+> renvoyer une nouvelle valeur ; envoyer `""` l'efface.
+
+### `POST /api/cohort-llm/rebuild` *(admin)*
+
+Body : `{ "cdm_name": "CHU_OMOP" }`. Force la reconstruction de l'index RAG a
+partir du `source_value_cache`. A lancer apres avoir (re)peuple le cache.
+
+---
+
+## 26. Module SapBERT — `/api/sapbert`
+
+Pilotage de l'embedder medical partage (`opal-sapbert`), utilise a la fois par
+les **suggestions de mapping** et le **RAG de l'assistant IA** — un seul modele
+en VRAM pour les deux. Module **actif par defaut** (`SAPBERT_MODE=on`).
+
+> Le mapping lit un top-K **pre-calcule** dans la table `sapbert_mappings` : le
+> runner n'est appele qu'au moment du **build**, jamais a la suggestion. Quand
+> SapBERT est off, les autres strategies de suggestion continuent de fonctionner.
+
+| Methode | Endpoint | Description | Roles |
+|---------|----------|-------------|-------|
+| `GET` | `/config` | Indicateur d'activation (toujours disponible) | Tous |
+| `GET` | `/domains/{cdm_name}` | Etat de build + interrupteur par domaine (domaines deja construits) | Tous (acces CDM) |
+| `GET` | `/buildable/{cdm_name}` | Domaines candidats a un build (valeurs source cachees et libellees) | Tous (acces CDM) |
+| `PUT` | `/toggle` | Activer/desactiver les suggestions SapBERT pour un (CDM, domaine) | admin, data-manager |
+| `POST` | `/build` | Construire les mappings SapBERT des domaines caches d'un CDM | admin, data-manager |
+| `POST` | `/build/cancel` | Annuler un build en cours | admin, data-manager |
+
+### `PUT /api/sapbert/toggle`
+
+```json
+{ "cdm_name": "CHU_OMOP", "domain": "Procedure", "enabled": true }
+```
+
+Le reglage est **persiste et survit aux reconstructions**.
+
+### `POST /api/sapbert/build`
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | query, string | CDM cible |
+| `domains` | query, string[], optional | Limiter a certains domaines ; par defaut, tous les domaines constructibles |
+
+Le build reutilise le **cache de source values existant** — il ne requete pas le
+CDM. Alternative : `POST /api/concepts/source-value-cache/populate?enable_sapbert=true`
+enchaine peuplement du cache **puis** build.
+
+### `POST /api/sapbert/build/cancel`
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `cdm_name` | query, string | CDM dont le build doit etre annule |
+
+L'annulation prend effet **entre deux domaines** (le domaine en cours va au bout).
+
+---
+
+## 27. Activite recente — `/api/recent`
+
+### `GET /api/recent/{cdm_name}`
+
+Fil d'activite recente de l'utilisateur courant sur un CDM (cohortes, analyses,
+mappings recents), alimente la page d'accueil.
+
+---
+
+## 28. WebSocket — Notifications temps reel
+
+### `WS /api/ws/notifications`
+
+Canal temps reel des notifications (**zero polling**). Le client s'authentifie
+avec un **ticket a usage unique** obtenu via `POST /api/auth/sse-ticket`, car un
+navigateur ne peut pas poser d'en-tete `Authorization` sur une WebSocket.
+
+```
+POST /api/auth/sse-ticket      →  { "ticket": "<one-time>" }
+WS   /api/ws/notifications?ticket=<one-time>
+```
+
+Protocole des messages, reconnexion et cycle de vie du ticket :
+[WEBSOCKET_NOTIFICATIONS.md](WEBSOCKET_NOTIFICATIONS.md).
+
+---
+
+## 29. Rate Limiting
 
 Plusieurs endpoints sont proteges par un rate limiter (`slowapi`). En cas de depassement, le serveur retourne `429 Too Many Requests` avec un header `Retry-After` indiquant le delai d'attente en secondes.
 
@@ -1997,7 +2364,7 @@ Plusieurs endpoints sont proteges par un rate limiter (`slowapi`). En cas de dep
 
 ---
 
-## 25. Codes d'erreur HTTP
+## 30. Codes d'erreur HTTP
 
 | Code | Signification |
 |------|---------------|

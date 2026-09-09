@@ -191,7 +191,7 @@ curl --noproxy '*' "http://localhost:8000/api/concepts/source-value-cache/status
 
 Chaque domaine est commite independamment : tu peux tester Procedure des qu'il est `done`, meme si Condition est encore `running`.
 
-**Equivalent UI** : page Mapping → "Charger un referentiel" pour les CSV ; page Settings ou Concept Explorer → bouton "Populate source value cache". Resultat identique.
+**Cote UI** : le peuplement du cache se fait depuis **Reglages → Source Value Cache** (bouton *Build*). En revanche, **l'upload de codebooks et de mappings SapBERT n'a pas d'ecran dedie** : il passe obligatoirement par l'API (`POST /api/mapping/reference/upload`, `POST /api/mapping/sapbert/upload`) ou par [scripts/reload_codebooks.sh](scripts/reload_codebooks.sh).
 
 ### Arret
 
@@ -863,7 +863,7 @@ opal/
 │   ├── i18n/
 │   │   ├── en.json           # Traductions anglais
 │   │   └── fr.json           # Traductions francais
-│   └── tests/                # 51 fichiers de tests (601+ tests)
+│   └── tests/                # 59 fichiers de tests (560+ cas)
 │       ├── conftest.py       # Fixtures SQLite in-memory
 │       ├── omop_mock.py      # Mock reutilisable psycopg2
 │       ├── README.md         # Documentation architecture de test
@@ -1037,12 +1037,12 @@ Les tests utilisent une base SQLite en memoire et mockent les connexions OMOP. A
 ### Tests
 
 ```bash
-# Backend (601 tests)
+# Backend (59 fichiers de tests)
 cd opal/backend
 pip install -r requirements-dev.txt
 pytest tests/ -v
 
-# Frontend (84 tests)
+# Frontend (17 fichiers de tests)
 cd opal/frontend
 npm install
 npx vitest run
@@ -1054,14 +1054,23 @@ Les tests backend utilisent une base SQLite en memoire et un mock psycopg2 (`omo
 
 ## Documentation
 
+> 📖 **[docs/README.md](docs/README.md) — index de toute la documentation**, avec
+> une entree par public (utilisateur, admin, developpeur) et un tableau
+> « questions frequentes → ou lire ».
+
 | Document | Description |
 |----------|-------------|
-| [docs/API.md](docs/API.md) | Reference API complete (80+ endpoints) |
+| [docs/README.md](docs/README.md) | **Index** de la documentation |
+| [docs/API.md](docs/API.md) | Reference API complete (220 endpoints REST + WebSocket) |
 | [docs/TECHNICAL.md](docs/TECHNICAL.md) | Documentation technique (architecture, modeles, securite) |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Guide utilisateur complet |
 | [docs/METHODOLOGIE.md](docs/METHODOLOGIE.md) | Methodologie des analyses (qualite, cohortes, mapping) |
 | [docs/WEBSOCKET_NOTIFICATIONS.md](docs/WEBSOCKET_NOTIFICATIONS.md) | Architecture WebSocket notifications |
 | [docs/COHORT_LLM.md](docs/COHORT_LLM.md) | Assistant IA cohort-llm — modes (off/embedded/on-premise), install et usage |
+| [docs/COHORT_LLM_MEDICAMENTS.md](docs/COHORT_LLM_MEDICAMENTS.md) | Assistant IA — resolution des criteres medicament (terme/classe → molecules → ATC) |
+| [docs/MATRICE_HABILITATION.md](docs/MATRICE_HABILITATION.md) | Matrice roles × permissions |
+| [sapbert-tools/README.md](sapbert-tools/README.md) | Service SapBERT — embedder medical partage (mapping + RAG) |
+| [ohdsi-tools/README.md](ohdsi-tools/README.md) | Runner OHDSI (Achilles, DQD, CDM Onboarding) |
 | [docs/adr/0001-ohdsi-runner-dedie.md](docs/adr/0001-ohdsi-runner-dedie.md) | ADR — runner OHDSI dédié (suppression du socket Docker) |
 | [CHANGELOG.md](CHANGELOG.md) | Historique detaille des changements par version |
 
